@@ -402,7 +402,7 @@
       <div class="row">
         <div class="field">
           <label for="authPassword">Password</label>
-          <input id="authPassword" type="password" placeholder="Minimum 6 characters" />
+          <input id="authPassword" type="password" placeholder="Min 8 chars incl. upper, lower, number, symbol/>
         </div>
       </div>
 
@@ -415,7 +415,7 @@
 
       <div class="hidden" id="registerBox" style="margin-top:12px;">
         <div style="font-size:1.05rem; font-weight:700;">Create account</div>
-        <div class="small">Tip: Firebase requires passwords to be at least 6 characters.</div>
+        <div class="small">Tip: Password must be at least 8 characters and include upper/lowercase letters, a number, and a symbol.</div>
         <div class="row" style="margin-top:10px;">
           <button id="registerBtn">Create account</button>
           <button class="secondary" id="hideRegisterBtn">Cancel</button>
@@ -1231,7 +1231,7 @@
   <script type="module">
     // ===== Firebase imports =====
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
-    import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+    import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, sendEmailVerification } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
     import {
       getFirestore, doc, setDoc, getDoc, collection, addDoc, getDocs, deleteDoc,
       query, where, orderBy, limit, serverTimestamp
@@ -1374,7 +1374,7 @@
     const foodSourceLabel = document.getElementById("foodSourceLabel");
     const resetMacrosBtn = document.getElementById("resetMacrosBtn");
 
-    [editCal, editP, editC, editF].forEach(el => {
+    [editCal, editP, editC, editF].filter(Boolean).forEach(el => {
       el.addEventListener("input", () => { macrosDirty = true; });
     });
     
@@ -1581,8 +1581,22 @@
     registerBtn.addEventListener("click", async () => {
       authStatus.textContent = "";
       try {
-        await createUserWithEmailAndPassword(auth, authEmail.value.trim(), authPassword.value);
+        const cred = await createUserWithEmailAndPassword(
+          auth,
+          authEmail.value.trim(),
+          authPassword.value.trim()
+        );
+
+        // 🔔 send verification email
+        await sendEmailVerification(cred.user);
+
+        authStatus.textContent =
+          "Account created ✅ Please check your email and verify before logging in.";
+
         registerBox.classList.add("hidden");
+
+        // optional: sign them out until verified
+        await signOut(auth);
       } catch (e) {
         authStatus.textContent = e.message;
       }
@@ -2065,6 +2079,12 @@
     }
 
     scanCancelBtn?.addEventListener("click", cleanupScannerUI);
+    
+    // iOS: release camera if user backgrounds / navigates away
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) cleanupScannerUI();
+    });
+    window.addEventListener("pagehide", cleanupScannerUI);
 
     function gramsFrom(amount, unit) {
       const a = Number(amount) || 0;
@@ -2078,7 +2098,7 @@
       return a;
     }
 
-    searchFoodBtn.addEventListener("click", async () => {
+    searchFoodBtn?.addEventListener("click", async () => {
       const q = foodQuery.value.trim();
       if (!q) return;
       foodStatus.textContent = "Searching...";
@@ -3055,7 +3075,7 @@
             </div>
             <div class="field">
               <label>Notes (optional)</label>
-              <input data-hnote="${i}" placeholder="optional" />
+              <input data-hnote="${i}" />
             </div>
           </div>
         `;
@@ -3681,6 +3701,13 @@
       resetUserScopedState();
 
       currentUser = user || null;
+
+      if (currentUser && !currentUser.emailVerified) {
+        authStatus.textContent = "Please verify your email before using the app.";
+        authView.classList.remove("hidden");
+        appView.classList.add("hidden");
+        return;
+      }
 
       if (!currentUser) {
         authView.classList.remove("hidden");
