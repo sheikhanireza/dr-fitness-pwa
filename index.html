@@ -3714,6 +3714,14 @@
         authStatus.textContent = "Please verify your email before using the app.";
         authView.classList.remove("hidden");
         appView.classList.add("hidden");
+
+        // 🔑 Force a clean auth session; prevents the “only logs in after refresh” symptom
+        try {
+          await signOut(auth);
+        } catch (e) {
+          console.error("Sign out failed:", e);
+        }
+
         return;
       }
 
