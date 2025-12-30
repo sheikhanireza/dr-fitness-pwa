@@ -24,6 +24,11 @@
 
   <style>
 
+#scanFoodBtn{
+  padding:10px 14px;
+  min-width:44px;
+}
+
 /* Cardio distance alignment fix */
 .cardioDistance {
   display: flex;
@@ -824,7 +829,13 @@
           <div class="field">
             <input id="foodQuery" placeholder="e.g. Egg..." />
           </div>
+          <!-- NEW: camera / barcode -->
+          <button class="secondary" id="scanFoodBtn" type="button" title="Scan barcode / take photo">📷</button>
+
           <button id="searchFoodBtn">Search</button>
+
+          <!-- NEW: hidden camera input (fallback / photo capture) -->
+          <input id="foodCameraInput" class="hidden" type="file" accept="image/*" capture="environment" />
         </div>
         <!-- FIX: Found # items appears here -->
         <div class="small" id="foodStatus"></div>
@@ -1318,6 +1329,8 @@
 
     const foodQuery = document.getElementById("foodQuery");
     const searchFoodBtn = document.getElementById("searchFoodBtn");
+    const scanFoodBtn = document.getElementById("scanFoodBtn");
+    const foodCameraInput = document.getElementById("foodCameraInput");
     const foodStatus = document.getElementById("foodStatus");
     const foodResults = document.getElementById("foodResults");
 
@@ -1895,6 +1908,17 @@
       return data.products || [];
     }
 
+    async function fetchOpenFoodFactsByBarcode(barcode) {
+      const code = String(barcode || "").trim();
+      if (!code) throw new Error("Missing barcode.");
+      const url = `https://world.openfoodfacts.org/api/v0/product/${encodeURIComponent(code)}.json`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("Barcode lookup failed");
+      const data = await res.json();
+      if (!data || data.status !== 1 || !data.product) throw new Error("Product not found for this barcode.");
+      return data.product;
+    }
+
     function getMacroPer100g(product) {
       const n = product.nutriments || {};
       const kcal = Number(n["energy-kcal_100g"] ?? n["energy-kcal"] ?? 0);
@@ -1913,6 +1937,51 @@
       macrosDirty = false;
       lastAutoKey = "";
       resetMacrosBtn.disabled = true;
+    }
+
+    function normalizeBarcode(raw) {
+      // Remove non-digits (common from scanners)
+      const s = String(raw || "").replace(/[^\d]/g, "");
+      // Common barcode lengths: 8, 12, 13, 14
+      if (![8, 12, 13, 14].includes(s.length)) return null;
+      return s;
+    }
+
+    async function handleBarcode(barcode) {
+      const code = normalizeBarcode(barcode);
+      if (!code) throw new Error("Invalid barcode format.");
+
+      foodStatus.textContent = "Looking up barcode...";
+      clearFoodResults();
+
+      const product = await fetchOpenFoodFactsByBarcode(code);
+      const m = getMacroPer100g(product);
+
+      // Require at least something usable
+      if (!(m.kcal || m.protein || m.carbs || m.fat)) {
+        throw new Error("Found product but no macros available in database.");
+      }
+
+      // Put it into your existing results pipeline as a single item
+      lastSearchItems = [{ p: product, m }];
+
+      const name = product.product_name || product.generic_name || "Unnamed product";
+      const brand = product.brands ? ` (${product.brands})` : "";
+      const opt = document.createElement("option");
+      opt.value = "0";
+      opt.textContent = `${name}${brand}`;
+      foodResults.appendChild(opt);
+
+      foodResults.value = "0";
+      resetMacrosBtn.disabled = false;
+
+      // Auto-fill macros based on serving
+      macrosDirty = false;
+      lastAutoKey = "";
+      populateEditableMacrosFromSelection(true);
+
+      foodStatus.textContent = `Found 1 item from barcode ✅`;
+      showToast("Barcode found ✅");
     }
 
     function gramsFrom(amount, unit) {
@@ -1955,6 +2024,102 @@
       } catch (e) {
         foodStatus.textContent = e.message;
       }
+    });
+
+    scanFoodBtn?.addEventListener("click", async () => {
+      // Best path: BarcodeDetector API (works on many Androids; iOS Safari support varies)
+      if ("BarcodeDetector" in window) {
+        try {
+          // Try camera stream scanning using BarcodeDetector
+          // We'll do a simple "take one frame" approach via file input fallback if stream fails.
+          foodStatus.textContent = "Opening camera...";
+
+          // iOS Safari often blocks getUserMedia unless HTTPS + user gesture (we do have a gesture here)
+          const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+
+          // Create a hidden video element
+          const video = document.createElement("video");
+          video.setAttribute("playsinline", "true");
+          video.srcObject = stream;
+          await video.play();
+
+          // Wait a moment for camera to focus
+          await new Promise(r => setTimeout(r, 700));
+
+          // Draw one frame to canvas
+          const canvas = document.createElement("canvas");
+          canvas.width = video.videoWidth || 1280;
+          canvas.height = video.videoHeight || 720;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+          // Stop camera
+          stream.getTracks().forEach(t => t.stop());
+
+          const detector = new BarcodeDetector({ formats: ["ean_13","ean_8","upc_a","upc_e"] });
+          const barcodes = await detector.detect(canvas);
+
+          if (!barcodes || !barcodes.length) {
+            showToast("No barcode detected — try again or use photo 📷");
+            // Fallback to camera photo picker
+            foodCameraInput?.click();
+            return;
+          }
+
+          const raw = barcodes[0]?.rawValue || "";
+          await handleBarcode(raw);
+          return;
+        } catch (e) {
+          console.warn("BarcodeDetector path failed, falling back to photo input:", e);
+          foodCameraInput?.click();
+          return;
+        }
+      }
+
+      // Fallback: just open camera photo input (you can still type-search after)
+      foodCameraInput?.click();
+    }); 
+
+    foodCameraInput?.addEventListener("change", async () => {
+      const file = foodCameraInput.files?.[0];
+      if (!file) return;
+
+      // For now: we’re not doing food image recognition (needs a different API).
+      // But we can attempt barcode detection from the captured photo if BarcodeDetector exists.
+      if ("BarcodeDetector" in window) {
+        try {
+          foodStatus.textContent = "Scanning photo for barcode...";
+          const img = await createImageBitmap(file);
+          const canvas = document.createElement("canvas");
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0);
+
+          const detector = new BarcodeDetector({ formats: ["ean_13","ean_8","upc_a","upc_e"] });
+          const barcodes = await detector.detect(canvas);
+
+          if (barcodes && barcodes.length) {
+            await handleBarcode(barcodes[0]?.rawValue || "");
+            foodCameraInput.value = "";
+            return;
+          }
+
+          foodStatus.textContent = "No barcode found in photo. Type a search instead.";
+          showToast("No barcode found in photo ❌");
+          foodCameraInput.value = "";
+          return;
+        } catch (e) {
+          console.warn(e);
+          foodStatus.textContent = "Could not scan photo. Type a search instead.";
+          foodCameraInput.value = "";
+          return;
+        }
+      }
+
+      foodStatus.textContent = "Photo captured ✅ (image recognition not enabled yet). Type a search.";
+      showToast("Photo captured ✅");
+      foodCameraInput.value = "";
     });
 
     function populateEditableMacrosFromSelection(force = false) {
