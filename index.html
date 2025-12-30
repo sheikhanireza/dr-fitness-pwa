@@ -24,6 +24,9 @@
 
   <style>
 
+/* Scanner modal tweaks */
+#scanVideo { background:#000; }
+
 #scanFoodBtn{
   padding:10px 14px;
   min-width:44px;
@@ -1331,6 +1334,11 @@
     const searchFoodBtn = document.getElementById("searchFoodBtn");
     const scanFoodBtn = document.getElementById("scanFoodBtn");
     const foodCameraInput = document.getElementById("foodCameraInput");
+    // Scanner modal refs
+    const scanModalBackdrop = document.getElementById("scanModalBackdrop");
+    const scanVideo = document.getElementById("scanVideo");
+    const scanCancelBtn = document.getElementById("scanCancelBtn");
+    const scanStatusLine = document.getElementById("scanStatusLine");
     const foodStatus = document.getElementById("foodStatus");
     const foodResults = document.getElementById("foodResults");
 
@@ -1984,6 +1992,59 @@
       showToast("Barcode found ✅");
     }
 
+    // ===== Live barcode scanner (ZXing) =====
+    let zxingReader = null;
+
+    async function startLiveBarcodeScan() {
+      const ZXing = await import("https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/+esm");
+
+      scanModalBackdrop.classList.remove("hidden");
+      scanStatusLine.textContent = "Opening camera…";
+
+      zxingReader = new ZXing.BrowserMultiFormatReader();
+
+      const constraints = {
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
+        audio: false
+      };
+
+      scanStatusLine.textContent = "Point camera at barcode…";
+
+      await zxingReader.decodeFromConstraints(
+        constraints,
+        scanVideo,
+        async (result, err, controls) => {
+          if (result) {
+            const raw = result.getText?.() || String(result.text || "");
+            try { controls.stop(); } catch {}
+            cleanupScannerUI();
+            await handleBarcode(raw);
+          }
+        }
+      );
+    }
+
+    function cleanupScannerUI() {
+      scanModalBackdrop.classList.add("hidden");
+      scanStatusLine.textContent = "Point camera at barcode…";
+
+      try {
+        const stream = scanVideo?.srcObject;
+        if (stream && stream.getTracks) stream.getTracks().forEach(t => t.stop());
+      } catch {}
+
+      if (scanVideo) scanVideo.srcObject = null;
+
+      try { zxingReader?.reset?.(); } catch {}
+      zxingReader = null;
+    }
+
+    scanCancelBtn?.addEventListener("click", cleanupScannerUI);
+
     function gramsFrom(amount, unit) {
       const a = Number(amount) || 0;
       if (unit === "g") return a;
@@ -2027,58 +2088,15 @@
     });
 
     scanFoodBtn?.addEventListener("click", async () => {
-      // Best path: BarcodeDetector API (works on many Androids; iOS Safari support varies)
-      if ("BarcodeDetector" in window) {
-        try {
-          // Try camera stream scanning using BarcodeDetector
-          // We'll do a simple "take one frame" approach via file input fallback if stream fails.
-          foodStatus.textContent = "Opening camera...";
-
-          // iOS Safari often blocks getUserMedia unless HTTPS + user gesture (we do have a gesture here)
-          const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-
-          // Create a hidden video element
-          const video = document.createElement("video");
-          video.setAttribute("playsinline", "true");
-          video.srcObject = stream;
-          await video.play();
-
-          // Wait a moment for camera to focus
-          await new Promise(r => setTimeout(r, 700));
-
-          // Draw one frame to canvas
-          const canvas = document.createElement("canvas");
-          canvas.width = video.videoWidth || 1280;
-          canvas.height = video.videoHeight || 720;
-          const ctx = canvas.getContext("2d");
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-          // Stop camera
-          stream.getTracks().forEach(t => t.stop());
-
-          const detector = new BarcodeDetector({ formats: ["ean_13","ean_8","upc_a","upc_e"] });
-          const barcodes = await detector.detect(canvas);
-
-          if (!barcodes || !barcodes.length) {
-            showToast("No barcode detected — try again or use photo 📷");
-            // Fallback to camera photo picker
-            foodCameraInput?.click();
-            return;
-          }
-
-          const raw = barcodes[0]?.rawValue || "";
-          await handleBarcode(raw);
-          return;
-        } catch (e) {
-          console.warn("BarcodeDetector path failed, falling back to photo input:", e);
-          foodCameraInput?.click();
-          return;
-        }
+      try {
+        foodStatus.textContent = "";
+        await startLiveBarcodeScan();
+      } catch (e) {
+        console.warn(e);
+        showToast("Live scan not available — using photo 📷");
+        foodCameraInput?.click();
       }
-
-      // Fallback: just open camera photo input (you can still type-search after)
-      foodCameraInput?.click();
-    }); 
+    });
 
     foodCameraInput?.addEventListener("change", async () => {
       const file = foodCameraInput.files?.[0];
@@ -3675,5 +3693,24 @@
       });
     }
   </script>
+  <!-- Barcode Scanner Modal -->
+  <div class="modalBackdrop hidden" id="scanModalBackdrop">
+    <div class="modal" style="max-width:560px;">
+      <div class="modalTitle">Scan Barcode</div>
+      <div class="small muted" id="scanStatusLine">Point camera at barcode…</div>
+
+      <div style="margin-top:12px; border-radius:14px; overflow:hidden; background:#0b0d14; border:1px solid #252a3c;">
+        <video id="scanVideo" playsinline style="width:100%; height:auto; display:block;"></video>
+      </div>
+
+      <div class="row" style="margin-top:12px; justify-content:flex-end;">
+        <button class="secondary" id="scanCancelBtn" type="button">Cancel</button>
+      </div>
+
+      <div class="small muted" style="margin-top:8px;">
+        Tip: move slightly closer/farther until it locks focus.
+      </div>
+    </div>
+  </div>
 </body>
 </html>
