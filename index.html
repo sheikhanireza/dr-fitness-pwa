@@ -3700,6 +3700,16 @@
 
       currentUser = user || null;
 
+      // ✅ IMPORTANT: refresh user so emailVerified is up-to-date
+      if (currentUser) {
+        try {
+          await currentUser.reload();
+          currentUser = auth.currentUser; // refresh reference
+        } catch (e) {
+          console.error("User reload failed:", e);
+        }
+      }
+
       if (currentUser && !currentUser.emailVerified) {
         authStatus.textContent = "Please verify your email before using the app.";
         authView.classList.remove("hidden");
