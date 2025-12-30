@@ -148,6 +148,27 @@
       align-items:end;
     }
 
+    .setRowGrid .field{
+      min-width: 0;
+    }
+
+    /* Make the set/interval row responsive on phones */
+    @media (max-width: 680px){
+      .setRowGrid{
+        grid-template-columns: 1fr;   /* stack */
+        gap: 10px;
+        align-items: stretch;
+      }
+
+      /* optional: make the distance row not fight for space */
+      .cardioDistanceRow{
+        gap: 8px;
+      }
+      .cardioDistanceRow select{
+        max-width: 110px;
+      }
+    }
+
     .weightWrap{
       position:relative;
       padding-top: 5px; /* creates space above the input for the BW pill */
