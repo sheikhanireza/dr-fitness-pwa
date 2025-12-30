@@ -1,4 +1,4 @@
-const CACHE_NAME = "dr-fitness-v1"; // bump to v2, v3... whenever you change files
+const CACHE_NAME = "dr-fitness-v2"; // bump to v2, v3... whenever you change files
 const ASSETS = [
   "./",
   "./index.html",
