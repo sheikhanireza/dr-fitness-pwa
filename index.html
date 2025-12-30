@@ -402,7 +402,7 @@
       <div class="row">
         <div class="field">
           <label for="authPassword">Password</label>
-          <input id="authPassword" type="password" placeholder="Min 8 chars incl. upper, lower, number, symbol"/>
+          <input id="authPassword" type="password" placeholder="Min 8 chars incl. upper, lower, number, symb"/>
         </div>
       </div>
 
@@ -1594,9 +1594,7 @@
           "Account created ✅ Please check your email and verify before logging in.";
 
         registerBox.classList.add("hidden");
-
-        // optional: sign them out until verified
-        await signOut(auth);
+        
       } catch (e) {
         authStatus.textContent = e.message;
       }
